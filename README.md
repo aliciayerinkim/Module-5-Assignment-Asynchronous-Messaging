@@ -1,6 +1,6 @@
 # CMPE 273 Module 5 Assignment - Asynchronous Messaging with RabbitMQ
 
-This project has a producer and a worker that talk to each other through a RabbitMQ queue called `orders`. The producer puts order messages into the queue, and two workers take them out and process them, so they are competing consumers. The workers send a manual ACK when they finish, and they check the event_id first so they can skip a duplicate.
+This project uses RabbitMQ to connect a producer and two workers through the `orders` queue. The producer puts order messages into the queue, and two workers take them out and process them, so they are competing consumers. The workers send a manual ACK when they finish, and they check the event_id first so they can skip a duplicate.
 
 ## Setup and Run
 
@@ -74,8 +74,8 @@ python producer.py --duplicate evt-1
 
 - The queue is durable and the messages are persistent.
 - Each worker uses `prefetch_count=1`, so it only gets one message at a time.
-- A worker only sends the ACK after the work is done, so if it dies before the ACK, RabbitMQ gives the message to another worker.
-- Both workers read and write the same `processed_events.txt`, which is how they know if an event_id was already done.
+- The worker only sends the ACK after finishing the work. If the worker crashes before sending it, RabbitMQ sends the message to another worker.
+- Both workers use the same `processed_events.txt` file to check if an event_id was already processed.
 
 ## Message Format
 
@@ -85,7 +85,7 @@ python producer.py --duplicate evt-1
 
 ## Evidence
 
-All the logs below are real, and I copied them straight from my run.
+The following logs are from my test.
 
 ### Successful message processing
 
@@ -100,7 +100,7 @@ The producer sent 6 orders to the `orders` queue:
 2026-10-26 19:40:23,209 INFO published event_id=evt-6 order_id=o6 item_id=item-106 quantity=1
 ```
 
-Here is one message going all the way through. worker-1 gets order `o1`, works on it for a second or two, and sends the ACK after it says done:
+This shows one message going all the way through. worker-1 gets order `o1`, works on it for 1-2 seconds, and sends the ACK after it says done:
 
 ```
 2026-10-26 19:40:23,253 INFO worker=worker-1 received event_id=evt-1 order_id=o1 redelivered=False
@@ -111,7 +111,7 @@ Here is one message going all the way through. worker-1 gets order `o1`, works o
 
 ### Two competing consumers
 
-For this one I started worker-1 and worker-2 on the same queue and ran the producer with 6 messages. The two workers split the work between them, so worker-1 got o1, o4, and o6 while worker-2 got o2, o3, and o5. No message was handled by both workers.
+I started worker-1 and worker-2 on the same queue and ran the producer with 6 messages. The two workers split the work between them, so worker-1 got o1, o4, and o6 while worker-2 got o2, o3, and o5. No message was handled by both workers.
 
 worker-1:
 
@@ -163,7 +163,7 @@ worker-1 got `o2`, did the work, and wrote `evt-2` to the file, but it quit righ
 2026-10-26 19:41:50,182 INFO worker=worker-1 crashing before ACK order_id=o2
 ```
 
-Since RabbitMQ never got an ACK for `o2`, it sent `o2` again to worker-2, and this time the message had `redelivered=True`. worker-2 saw that `evt-2` was already in the file, so it marked it as a duplicate and didn't do the work again. After that, worker-2 kept running and finished all the other orders, so the system stayed up even though one worker crashed.
+RabbitMQ did not receive an ACK for `o2`, so it sent the message to worker-2 again. This time, `redelivered` was `True`. Worker-2 saw that `evt-2` was already in the file and skipped the order. The other orders were still processed after worker-1 crashed.
 
 ```
 2026-10-26 19:41:27,265 INFO worker=worker-2 waiting for messages on queue=orders
@@ -211,7 +211,7 @@ For this test I kept `processed_events.txt` and left worker-2 running from befor
 2026-10-26 19:42:25,792 INFO published event_id=evt-1 order_id=o1 item_id=item-101 quantity=2
 ```
 
-Every event_id was already in the file, so both workers skipped every message and didn't process any order again. They still sent the ACK each time, which is why the messages still left the queue. worker-2 even got `evt-1` two times and skipped it both times.
+All event_id was already in the file, so both workers skipped every message and didn't process any order again. They still sent the ACK each time, which is why the messages still left the queue. worker-2 even got `evt-1` two times and skipped it both times.
 
 worker-1:
 
@@ -262,4 +262,4 @@ There is a small race in my setup, because if two workers check the file at the 
 
 ## Reflection
 
-A message can be delivered more than once because RabbitMQ only removes a message after it gets an ACK. If a worker finishes the work but crashes before sending the ACK, RabbitMQ thinks the message was never handled and sends it to another worker. The network can also fail, so the producer might send the same message again. Idempotent handling helps because the worker saves each event_id and checks it first, so the same event only changes things one time. In my test, worker-1 crashed before the ACK, and worker-2 got the message again but skipped it as a duplicate.
+I learned that RabbitMQ can send the same message again if a worker crashes before sending an ACK. In my test, worker-1 finished `o2` but crashed before the ACK was sent. RabbitMQ then gave the message to worker-2. Worker-2 checked `processed_events.txt`, saw that `evt-2` was already there, and skipped the order. This helped me understand why checking the event ID is important when processing messages. This is idempotent handling, because even if the same message comes more than once, the order is only processed one time.
