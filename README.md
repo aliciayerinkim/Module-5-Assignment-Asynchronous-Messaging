@@ -70,16 +70,7 @@ python producer.py --duplicate evt-1
 
 ## Architecture
 
-```mermaid
-flowchart LR
-    P[producer.py] -->|publish| Q[(orders queue<br/>RabbitMQ)]
-    Q --> W1[worker-1]
-    Q --> W2[worker-2]
-    W1 -.->|ACK| Q
-    W2 -.->|ACK| Q
-    W1 --- F[processed_events.txt]
-    W2 --- F
-```
+<img width="1920" height="760" alt="architecture" src="https://github.com/user-attachments/assets/d3aaa166-3871-45cd-817d-1304d817a328" />
 
 - The queue is durable and the messages are persistent.
 - Each worker uses `prefetch_count=1`, so it only gets one message at a time.
